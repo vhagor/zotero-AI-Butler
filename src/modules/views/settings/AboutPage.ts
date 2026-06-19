@@ -5,7 +5,7 @@
  * @author AI Butler Team
  */
 
-import { version, config, repository } from "../../../../package.json";
+import { version, author, config, repository } from "../../../../package.json";
 import { createCard, createNotice } from "../ui/components";
 
 export class AboutPage {
@@ -172,7 +172,7 @@ export class AboutPage {
         <strong>版本:</strong> ${version || "1.0.0"}
       </p>
       <p style="font-size: 14px; color: var(--ai-text-muted); margin: 8px 0;">
-        <strong>作者:</strong> Steven Jianhao Li
+        <strong>作者:</strong> ${author || "Steven Jianhao Li, juqi Li"}
       </p>
       <p style="font-size: 14px; color: var(--ai-text-muted); margin: 8px 0;">
         <strong>GitHub:</strong> <a href="${repoUrl}" target="_blank" style="color: #59c0bc; text-decoration: none;">${repoUrl}</a>

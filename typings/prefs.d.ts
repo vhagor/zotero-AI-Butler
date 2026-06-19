@@ -29,6 +29,13 @@ declare namespace _ZoteroTypes {
       "ollamaApiUrl": string;
       "ollamaApiKey": string;
       "ollamaModel": string;
+      "cursorAgentBinaryPath": string;
+      "cursorAgentApiKey": string;
+      "cursorAgentModel": string;
+      "cursorAgentMode": string;
+      "cursorAgentWorkspace": string;
+      "cursorAgentExtraArgs": string;
+      "cursorAgentResumeEnabled": boolean;
       "llmEndpoints": string;
       "llmRoutingStrategy": string;
       "llmRoundRobinCursor": string;

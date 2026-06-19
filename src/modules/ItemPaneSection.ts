@@ -1436,17 +1436,29 @@ async function loadTableContent(
   item: Zotero.Item,
   container: HTMLElement,
 ): Promise<void> {
+  const doc = container.ownerDocument || Zotero.getMainWindow().document;
+  const targetItem = await resolveParentRegularItem(item);
   try {
     const { LiteratureReviewService } =
       await import("./literatureReviewService");
-    const tableContent = await LiteratureReviewService.findTableNote(item);
+    const tableContent =
+      await LiteratureReviewService.findTableNote(targetItem);
 
     if (tableContent) {
       // 将 Markdown 表格简单渲染为 HTML
       const { marked } = await import("marked");
       marked.setOptions({ gfm: true, breaks: true });
-      const html = marked.parse(tableContent) as string;
-      container.innerHTML = html;
+      let html = marked.parse(tableContent) as string;
+      html = normalizeHtmlFragmentForXhtml(doc, html);
+      try {
+        container.innerHTML = html;
+      } catch (renderError) {
+        ztoolkit.log(
+          "[AI-Butler] 表格 HTML 渲染失败，回退到 Markdown 原文:",
+          renderError,
+        );
+        container.innerHTML = `<pre style="white-space: pre-wrap; overflow-wrap: anywhere; margin: 0;">${escapeHtmlForNote(tableContent)}</pre>`;
+      }
       // 适配表格样式
       const tables = container.querySelectorAll("table");
       tables.forEach((table: Element) => {
@@ -1473,8 +1485,25 @@ async function loadTableContent(
     }
   } catch (error) {
     ztoolkit.log("[AI-Butler] 加载表格内容失败:", error);
-    container.innerHTML = `<div style="color: #9e9e9e; font-size: 12px; text-align: center; padding: 12px;">加载失败</div>`;
+    container.innerHTML = `<div style="color: #9e9e9e; font-size: 12px; text-align: center; padding: 12px;">加载失败，请点击“重新生成”或刷新侧边栏</div>`;
   }
+}
+
+async function resolveParentRegularItem(
+  item: Zotero.Item,
+): Promise<Zotero.Item> {
+  try {
+    if ((item as any).isAttachment?.()) {
+      const parentId = (item as any).parentItemID || (item as any).parentID;
+      if (parentId) {
+        const parent = await Zotero.Items.getAsync(parentId);
+        if (parent) return parent as Zotero.Item;
+      }
+    }
+  } catch (error) {
+    ztoolkit.log("[AI-Butler] 表格区域解析父条目失败:", error);
+  }
+  return item;
 }
 
 /**
@@ -1526,13 +1555,15 @@ function renderTableSection(
 
   // 异步加载综述状态徽章
   void (async () => {
-    const itemTags: Array<{ tag: string }> = (item as any).getTags?.() || [];
+    const targetItem = await resolveParentRegularItem(item);
+    const itemTags: Array<{ tag: string }> =
+      (targetItem as any).getTags?.() || [];
     const isReviewed = itemTags.some(
       (t: { tag: string }) => t.tag === "AI-Reviewed",
     );
 
     let hasTable = false;
-    const subNoteIDs: number[] = (item as any).getNotes?.() || [];
+    const subNoteIDs: number[] = (targetItem as any).getNotes?.() || [];
     for (const nid of subNoteIDs) {
       try {
         const n = await Zotero.Items.getAsync(nid);
@@ -1603,6 +1634,7 @@ function renderTableSection(
     refillBtn.textContent = "⏳ 生成中...";
     refillBtn.style.pointerEvents = "none";
     try {
+      const targetItem = await resolveParentRegularItem(item);
       const { LiteratureReviewService } =
         await import("./literatureReviewService");
       const { DEFAULT_TABLE_TEMPLATE, DEFAULT_TABLE_FILL_PROMPT } =
@@ -1615,7 +1647,7 @@ function renderTableSection(
         DEFAULT_TABLE_FILL_PROMPT;
 
       // 先删除已有 AI-Table 笔记
-      const noteIDs = (item as any).getNotes?.() || [];
+      const noteIDs = (targetItem as any).getNotes?.() || [];
       for (const nid of noteIDs) {
         const note = await Zotero.Items.getAsync(nid);
         if (!note) continue;
@@ -1627,28 +1659,23 @@ function renderTableSection(
       }
 
       // 找到 PDF 附件
-      const attachmentIDs = (item as any).getAttachments?.() || [];
+      const attachmentIDs = (targetItem as any).getAttachments?.() || [];
       for (const attId of attachmentIDs) {
         const att = await Zotero.Items.getAsync(attId);
         if (att && (att as any).isPDFAttachment?.()) {
           const table = await LiteratureReviewService.fillTableForSinglePDF(
-            item,
+            targetItem,
             att,
             tableTemplate,
             fillPrompt,
           );
-          await LiteratureReviewService.saveTableNote(item, table);
+          await LiteratureReviewService.saveTableNote(targetItem, table);
           break;
         }
       }
 
       // 刷新内容
-      const tableContent = doc.getElementById(
-        "ai-butler-table-content",
-      ) as HTMLElement | null;
-      if (tableContent) {
-        await loadTableContent(item, tableContent);
-      }
+      await loadTableContent(targetItem, tableContentEl);
     } catch (err) {
       ztoolkit.log("[AI-Butler] 重新填表失败:", err);
     } finally {

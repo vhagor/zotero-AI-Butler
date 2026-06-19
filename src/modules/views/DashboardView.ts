@@ -41,6 +41,7 @@ import {
  */
 export enum ButlerStatus {
   WORKING = "working", // 工作中
+  QUEUED = "queued", // 等待处理
   IDLE = "idle", // 休息中
   ERROR = "error", // 错误状态
 }
@@ -254,19 +255,22 @@ export class DashboardView extends BaseView {
       id: "butler-status-card",
       styles: {
         margin: "0 20px 20px 20px",
-        padding: "30px",
-        background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-        borderRadius: "12px",
-        color: "#fff",
-        boxShadow: "0 4px 6px rgba(0,0,0,0.1)",
+        padding: "24px",
+        background:
+          "linear-gradient(135deg, rgba(89, 192, 188, 0.18) 0%, rgba(89, 192, 188, 0.06) 100%)",
+        border: "1px solid rgba(89, 192, 188, 0.28)",
+        borderRadius: "18px",
+        color: "var(--ai-text)",
+        boxShadow:
+          "0 1px 2px rgba(15, 23, 42, 0.05), 0 16px 32px rgba(15, 23, 42, 0.06)",
       },
     });
 
     const statusIcon = this.createElement("div", {
       id: "status-icon",
       styles: {
-        fontSize: "48px",
-        marginBottom: "15px",
+        fontSize: "34px",
+        marginBottom: "12px",
       },
       textContent: "😴",
     });
@@ -274,9 +278,9 @@ export class DashboardView extends BaseView {
     const statusText = this.createElement("div", {
       id: "status-text",
       styles: {
-        fontSize: "24px",
+        fontSize: "22px",
         fontWeight: "700",
-        marginBottom: "10px",
+        marginBottom: "8px",
       },
       textContent: "AI 管家正在休息",
     });
@@ -285,7 +289,7 @@ export class DashboardView extends BaseView {
       id: "status-detail",
       styles: {
         fontSize: "14px",
-        opacity: "0.9",
+        color: "var(--ai-text-muted)",
       },
       textContent: "管家已为您总结 0 篇文献",
     });
@@ -375,7 +379,7 @@ export class DashboardView extends BaseView {
     });
 
     const actions = [
-      { icon: "🔍", label: "扫描未分析论文", color: "#2196f3" },
+      { icon: "🔍", label: "扫描所有论文", color: "#2196f3" },
       { icon: "🚀", label: "开始自动扫描", color: "#4caf50" },
       { icon: "⏸️", label: "暂停自动扫描", color: "#ff9800" },
       { icon: "📋", label: "查看任务队列", color: "#9c27b0" },
@@ -486,7 +490,19 @@ export class DashboardView extends BaseView {
           ? `正在阅读: ${currentItem}${remaining ? ` (还剩 ${remaining} 篇)` : ""}`
           : "正在处理文献...";
         this.statusCard.style.background =
-          "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)";
+          "linear-gradient(135deg, rgba(89, 192, 188, 0.2) 0%, rgba(89, 192, 188, 0.08) 100%)";
+        this.statusCard.style.borderColor = "rgba(89, 192, 188, 0.38)";
+        break;
+
+      case ButlerStatus.QUEUED:
+        statusIcon.textContent = "⏳";
+        statusText.textContent = "AI 管家正在排队处理";
+        statusDetail.textContent = remaining
+          ? `队列中还有 ${remaining} 篇文献，正在准备下一批`
+          : "正在准备下一批任务";
+        this.statusCard.style.background =
+          "linear-gradient(135deg, rgba(245, 158, 11, 0.18) 0%, rgba(245, 158, 11, 0.06) 100%)";
+        this.statusCard.style.borderColor = "rgba(245, 158, 11, 0.32)";
         break;
 
       case ButlerStatus.IDLE:
@@ -494,7 +510,8 @@ export class DashboardView extends BaseView {
         statusText.textContent = "AI 管家正在休息";
         statusDetail.textContent = `管家已为您总结 ${this.stats.totalProcessed} 篇文献`;
         this.statusCard.style.background =
-          "linear-gradient(135deg, #667eea 0%, #764ba2 100%)";
+          "linear-gradient(135deg, rgba(99, 102, 241, 0.14) 0%, rgba(89, 192, 188, 0.06) 100%)";
+        this.statusCard.style.borderColor = "rgba(99, 102, 241, 0.24)";
         break;
 
       case ButlerStatus.ERROR:
@@ -502,7 +519,8 @@ export class DashboardView extends BaseView {
         statusText.textContent = "AI 管家遇到了问题";
         statusDetail.textContent = "请检查配置或查看错误日志";
         this.statusCard.style.background =
-          "linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%)";
+          "linear-gradient(135deg, rgba(239, 68, 68, 0.16) 0%, rgba(239, 68, 68, 0.06) 100%)";
+        this.statusCard.style.borderColor = "rgba(239, 68, 68, 0.32)";
         break;
     }
   }
@@ -690,7 +708,7 @@ export class DashboardView extends BaseView {
         this.showDeepSeekSetupWizard();
         break;
 
-      case "扫描未分析论文":
+      case "扫描所有论文":
         // 切换到库扫描视图
         MainWindow.getInstance().switchTab("scanner");
         break;
@@ -1499,6 +1517,10 @@ export class DashboardView extends BaseView {
   private calculateButlerStatus(stats: QueueStats): ButlerStatus {
     if (stats.processing > 0) {
       return ButlerStatus.WORKING;
+    }
+
+    if (stats.pending > 0 || stats.priority > 0) {
+      return ButlerStatus.QUEUED;
     }
 
     if (stats.failed > 0 && stats.pending === 0 && stats.priority === 0) {

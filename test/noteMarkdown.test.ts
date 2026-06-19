@@ -4,6 +4,7 @@ import {
   decodeMathHtmlEntities,
   markdownToDisplayHtml,
   markdownToZoteroNoteHtml,
+  normalizeMarkdownForRendering,
   normalizeFollowUpChatNoteHtml,
   parseFollowUpChatPairsFromNoteHtml,
 } from "../src/modules/noteMarkdown";
@@ -19,6 +20,71 @@ describe("note Markdown rendering", function () {
     expect(html).to.contain('<span class="math">$E=mc^2$</span>');
     expect(html).to.contain("\\displaystyle a_b = c^2");
     expect(html).not.to.contain("## Follow-up answer");
+  });
+
+  it("normalizes loose tab-separated tables into GFM tables", function () {
+    const markdown = [
+      "3.1 三种运行模式",
+      "模式\t时机\t内容",
+      "Calibration（校准）\t每个模型、每个目标压缩比各做一次\t收集校准数据 KV，算 PCA 基",
+      "Compression（压缩）\tprefill/decode 之间\t用校准参数压缩 Key/Value",
+    ].join("\n");
+
+    const normalized = normalizeMarkdownForRendering(markdown);
+    expect(normalized).to.contain("| 模式 | 时机 | 内容 |");
+    expect(normalized).to.contain("| --- | --- | --- |");
+
+    const html = markdownToZoteroNoteHtml(markdown);
+    expect(html).to.contain("<table>");
+    expect(html).to.contain("<th>模式</th>");
+    expect(html).to.contain("<td>Compression（压缩）</td>");
+  });
+
+  it("wraps standalone naked math lines so Zotero can render them", function () {
+    const markdown = [
+      "对中心化矩阵做 SVD：",
+      "C−μ=UΣV⊤",
+      "",
+      "对任意 KV 矩阵：",
+      "D=(X−μ)V,X=DV⊤+μ",
+    ].join("\n");
+
+    const normalized = normalizeMarkdownForRendering(markdown);
+    expect(normalized).to.contain("$$\nC-\\mu =U\\Sigma V^\\top\n$$");
+    expect(normalized).to.contain("D=(X-\\mu )V,X=DV^\\top +\\mu");
+
+    const html = markdownToZoteroNoteHtml(markdown);
+    expect(html).to.contain('<span class="math">$\\displaystyle');
+    expect(html).to.contain("\\Sigma");
+    expect(html).to.contain("^\\top");
+  });
+
+  it("unwraps formula-only fenced code blocks before math rendering", function () {
+    const markdown = [
+      "3.2 单次频域 KV 压缩",
+      "",
+      "```text",
+      "$$",
+      "\\hat{K}_{0:L-1} = \\sqrt{\\frac{L}{N}}\\,\\mathrm{IDCT}(Z^K_{0:L-1})",
+      "$$",
+      "```",
+      "",
+      "```text",
+      "$$",
+      "\\tilde{A}^{(N,L)} = \\mathrm{Softmax}\\!\\left(\\frac{q_N K^\\top}{\\sqrt{d}}\\right)V",
+      "$$",
+    ].join("\n");
+
+    const normalized = normalizeMarkdownForRendering(markdown);
+    expect(normalized).not.to.contain("```text");
+    expect(normalized).not.to.contain("```");
+    expect(normalized).to.contain("\\hat{K}_{0:L-1}");
+
+    const html = markdownToZoteroNoteHtml(markdown);
+    expect(html).to.contain('<span class="math">$\\displaystyle');
+    expect(html).to.contain("\\hat{K}_{0:L-1}");
+    expect(html).to.contain("\\tilde{A}^{(N,L)}");
+    expect(html).not.to.contain("<code>");
   });
 
   it("escapes formula contents before writing Zotero note HTML", function () {
@@ -111,6 +177,28 @@ describe("note Markdown rendering", function () {
         user: "How does {context} affect the next question?",
         assistant:
           'It should preserve {"role":"assistant"} and arrows --> safely.',
+      },
+    ]);
+  });
+
+  it("restores follow-up chats from XML-safe data attributes when comments are gone", function () {
+    const html = buildFollowUpChatPairNoteHtml({
+      pairId: "pair_attr_178",
+      userMessage: "文章是如何处理 attention sink 的问题的",
+      assistantMessage:
+        "它保留 sink token，并通过频域压缩降低 KV cache 体积。\n\n| 项 | 说明 |\n| --- | --- |\n| sink | 保留 |",
+      savedAt: "2026/6/19 12:10:56",
+    });
+    const withoutComments = html.replace(/<!--[\s\S]*?-->/g, "");
+
+    expect(html).to.contain('data-ai-butler-chat-json-source="v1"');
+    expect(withoutComments).not.to.contain("AI_BUTLER_CHAT_JSON");
+    expect(parseFollowUpChatPairsFromNoteHtml(withoutComments)).to.deep.equal([
+      {
+        id: "pair_attr_178",
+        user: "文章是如何处理 attention sink 的问题的",
+        assistant:
+          "它保留 sink token，并通过频域压缩降低 KV cache 体积。\n\n| 项 | 说明 |\n| --- | --- |\n| sink | 保留 |",
       },
     ]);
   });

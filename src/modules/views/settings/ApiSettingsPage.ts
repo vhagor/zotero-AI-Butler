@@ -1822,6 +1822,12 @@ export class ApiSettingsPage {
         apiKeyId: "ollamaApiKey",
         modelId: "ollamaModel",
       },
+      "cursor-agent": {
+        // Cursor Agent: apiUrl 字段含义是本地 `agent` 可执行文件路径
+        apiUrlId: "cursorAgentBinaryPath",
+        apiKeyId: "cursorAgentApiKey",
+        modelId: "cursorAgentModel",
+      },
     };
     const config = configs[keyManagerId];
 
@@ -1932,6 +1938,7 @@ export class ApiSettingsPage {
         openrouter: "openRouterApiKey",
         volcanoark: "volcanoArkApiKey",
         ollama: "ollamaApiKey",
+        "cursor-agent": "cursorAgentApiKey",
       };
       const prefKey = mapping[providerId];
       if (prefKey) {

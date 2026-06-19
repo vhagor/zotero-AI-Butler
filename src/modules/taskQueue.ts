@@ -228,6 +228,11 @@ export class TaskQueueManager {
   /** 已请求终止但底层请求尚未结束的任务 */
   private abortingTasks: Set<string> = new Set();
 
+  /** 当前任务执行代号，用于忽略已终止/重试后的旧异步结果 */
+  private activeTaskRuns: Map<string, number> = new Map();
+
+  private nextTaskRunId = 1;
+
   /** 任务进度回调函数集合 */
   private progressCallbacks: Set<TaskProgressCallback> = new Set();
 
@@ -239,6 +244,9 @@ export class TaskQueueManager {
 
   /** 队列执行器定时器ID */
   private executorTimerId: number | null = null;
+
+  /** 立即执行下一批的短延迟定时器ID */
+  private immediateExecutorTimerId: number | null = null;
 
   /** 最近一次加载到的持久化快照时间 */
   private lastLoadedSnapshotAt: string | null = null;
@@ -418,6 +426,10 @@ export class TaskQueueManager {
     this.notifyProgress(task.id, task.progress, "AI summary queued");
   }
 
+  private isTaskRunActive(taskId: string, runId: number): boolean {
+    return this.activeTaskRuns.get(taskId) === runId;
+  }
+
   // ==================== 任务管理 ====================
 
   /**
@@ -450,6 +462,8 @@ export class TaskQueueManager {
 
       if (!this.isRunning) {
         this.start();
+      } else {
+        this.scheduleImmediateBatch();
       }
       if (priority) {
         this.executeTask(taskId).catch((e) => {
@@ -481,6 +495,8 @@ export class TaskQueueManager {
     // 如果执行器未运行,启动它
     if (!this.isRunning) {
       this.start();
+    } else {
+      this.scheduleImmediateBatch();
     }
 
     // 如果是优先任务，立即执行（不等待批处理周期）
@@ -1438,6 +1454,7 @@ export class TaskQueueManager {
     });
     this.taskAbortControllers.clear();
     this.abortingTasks.clear();
+    this.activeTaskRuns.clear();
 
     // 清空队列
     this.tasks.clear();
@@ -1522,17 +1539,31 @@ export class TaskQueueManager {
     }
 
     this.abortingTasks.add(taskId);
-    task.workflowStage = "正在终止";
+    this.activeTaskRuns.delete(taskId);
+    task.status = TaskStatus.FAILED;
+    task.completedAt = new Date();
+    task.duration = task.startedAt
+      ? Math.floor(
+          (task.completedAt.getTime() - task.startedAt.getTime()) / 1000,
+        )
+      : undefined;
+    task.workflowStage = "已终止";
     task.error = LLM_REQUEST_ABORT_MESSAGE;
     task.errorDetails = TASK_ABORT_DETAIL;
-    this.notifyProgress(taskId, task.progress, "正在终止");
 
     const controller = this.taskAbortControllers.get(taskId);
     if (controller) {
       controller.abort(LLM_REQUEST_ABORT_MESSAGE);
     }
 
+    this.processingTasks.delete(taskId);
+    this.taskAbortControllers.delete(taskId);
+    this.abortingTasks.delete(taskId);
+
     await this.saveToStorage();
+    this.notifyProgress(taskId, task.progress, "已终止");
+    this.notifyComplete(taskId, false, task.error);
+    this.notifyStream(taskId, { type: "error" });
     logTaskQueue(`用户终止任务: ${task.title} (${taskId})`);
   }
 
@@ -1653,6 +1684,17 @@ export class TaskQueueManager {
     }, this.executionInterval) as any as number;
   }
 
+  private scheduleImmediateBatch(): void {
+    if (!this.isRunning || this.immediateExecutorTimerId !== null) {
+      return;
+    }
+
+    this.immediateExecutorTimerId = setTimeout(() => {
+      this.immediateExecutorTimerId = null;
+      void this.executeNextBatch();
+    }, 0) as any as number;
+  }
+
   /**
    * 停止队列执行器
    */
@@ -1667,6 +1709,10 @@ export class TaskQueueManager {
     if (this.executorTimerId !== null) {
       clearInterval(this.executorTimerId);
       this.executorTimerId = null;
+    }
+    if (this.immediateExecutorTimerId !== null) {
+      clearTimeout(this.immediateExecutorTimerId);
+      this.immediateExecutorTimerId = null;
     }
 
     logTaskQueue("停止队列执行器");
@@ -1699,7 +1745,8 @@ export class TaskQueueManager {
   /**
    * 执行下一批任务
    *
-   * 并行执行 batchSize 个任务，所有任务完成后再进入下一个间隔周期
+   * 并行执行 batchSize 个任务；若队列仍有待处理任务，立即接续下一批。
+   * batchInterval 仅作为兜底轮询与节流设置，不再让多任务队列每批空等。
    */
   private async executeNextBatch(): Promise<void> {
     if (this.isBatchRunning) {
@@ -1770,7 +1817,13 @@ export class TaskQueueManager {
           task.status === TaskStatus.PENDING,
       );
 
-      if (!hasPending && this.processingTasks.size === 0 && this.isRunning) {
+      if (hasPending && this.processingTasks.size === 0 && this.isRunning) {
+        this.scheduleImmediateBatch();
+      } else if (
+        !hasPending &&
+        this.processingTasks.size === 0 &&
+        this.isRunning
+      ) {
         this.stop();
       }
     }
@@ -1822,6 +1875,9 @@ export class TaskQueueManager {
       return false;
     }
 
+    const runId = this.nextTaskRunId++;
+    this.activeTaskRuns.set(taskId, runId);
+
     // 更新任务状态为处理中
     task.status = TaskStatus.PROCESSING;
     task.startedAt = new Date();
@@ -1861,7 +1917,10 @@ export class TaskQueueManager {
           this.notifyProgress(taskId, progress, message);
         },
         (chunk: string) => {
-          if (this.abortingTasks.has(taskId)) {
+          if (
+            this.abortingTasks.has(taskId) ||
+            !this.isTaskRunActive(taskId, runId)
+          ) {
             return;
           }
           // 将增量内容广播给监听者
@@ -1877,6 +1936,10 @@ export class TaskQueueManager {
         },
         { ...(task.options || {}), abortSignal: abortController.signal },
       );
+
+      if (!this.isTaskRunActive(taskId, runId)) {
+        return false;
+      }
 
       if (this.abortingTasks.has(taskId) || abortController.signal.aborted) {
         throw new Error(LLM_REQUEST_ABORT_MESSAGE);
@@ -1900,6 +1963,10 @@ export class TaskQueueManager {
       }
       return false; // 非快速失败，计入批次
     } catch (error: any) {
+      if (!this.isTaskRunActive(taskId, runId)) {
+        return false;
+      }
+
       // 任务失败
       const isTaskAborted =
         this.abortingTasks.has(taskId) ||
@@ -1947,11 +2014,14 @@ export class TaskQueueManager {
       this.notifyStream(taskId, { type: "error" });
       return isNoPdfError; // 无 PDF 错误时返回 true，表示快速失败
     } finally {
-      // 移除处理中标记
-      this.processingTasks.delete(taskId);
-      this.taskAbortControllers.delete(taskId);
-      this.abortingTasks.delete(taskId);
-      await this.saveToStorage();
+      if (this.isTaskRunActive(taskId, runId)) {
+        // 移除处理中标记
+        this.processingTasks.delete(taskId);
+        this.taskAbortControllers.delete(taskId);
+        this.abortingTasks.delete(taskId);
+        this.activeTaskRuns.delete(taskId);
+        await this.saveToStorage();
+      }
     }
   }
 

@@ -8,6 +8,7 @@
   "include": [
     "**/*.ts",
     "../typings/global.d.ts",
-    "../src/modules/llmClient.ts"
+    "../src/modules/llmClient.ts",
+    "../src/modules/llmproviders/CursorAgentProvider.ts"
   ]
 }

@@ -4,6 +4,8 @@ import {
   getDefaultTableTemplate,
   getDefaultTableFillPrompt,
   getDefaultTableReviewPrompt,
+  DEFAULT_TABLE_FILL_PROMPT_V1,
+  DEFAULT_TABLE_TEMPLATE_V1,
   PROMPT_VERSION,
   shouldUpdatePrompt,
 } from "../utils/prompts";
@@ -262,6 +264,26 @@ function initializeDefaultPrefs() {
           setPref("promptVersion" as any, PROMPT_VERSION);
           continue;
         }
+      }
+
+      if (
+        key === "tableTemplate" &&
+        typeof currentValue === "string" &&
+        currentValue.trim() === DEFAULT_TABLE_TEMPLATE_V1.trim()
+      ) {
+        ztoolkit.log("[AI-Butler][Prefs] 更新表格模板，加入源码识别维度");
+        setPref("tableTemplate" as any, defaultValue);
+        continue;
+      }
+
+      if (
+        key === "tableFillPrompt" &&
+        typeof currentValue === "string" &&
+        currentValue.trim() === DEFAULT_TABLE_FILL_PROMPT_V1.trim()
+      ) {
+        ztoolkit.log("[AI-Butler][Prefs] 更新表格填表提示词，加入源码识别规则");
+        setPref("tableFillPrompt" as any, defaultValue);
+        continue;
       }
 
       // 如果配置不存在或为空，则设置默认值

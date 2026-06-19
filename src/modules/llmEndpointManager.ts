@@ -78,6 +78,14 @@ const PROVIDER_DEFAULTS: Record<LLMEndpointProviderType, ProviderDefaults> = {
     model: "llama3.2",
     reasoningEffort: "default",
   },
+  "cursor-agent": {
+    // 通过本地 `cursor-agent` CLI 子进程调用 Cursor 自家模型。
+    // 这里的 apiUrl 字段被复用为 "agent 可执行文件路径"，留空时由 provider 自动探测。
+    label: "Cursor Agent (CLI)",
+    apiUrl: "",
+    model: "composer-2.5",
+    reasoningEffort: "default",
+  },
 };
 
 const PROVIDER_TYPES = Object.keys(
@@ -100,6 +108,7 @@ function safeProviderType(raw: unknown): LLMEndpointProviderType {
   if (value.includes("gemini")) return "google";
   if (value.includes("claude")) return "anthropic";
   if (value.includes("ollama")) return "ollama";
+  if (value === "cursor" || value === "cursoragent") return "cursor-agent";
   if (PROVIDER_TYPES.includes(value as LLMEndpointProviderType)) {
     return value as LLMEndpointProviderType;
   }
@@ -178,17 +187,24 @@ export class LLMEndpointManager {
   }
 
   static providerAllowsEmptyApiKey(providerType: string): boolean {
-    return safeProviderType(providerType) === "ollama";
+    const id = safeProviderType(providerType);
+    // Cursor Agent 也允许空密钥：当 CURSOR_API_KEY 未填写时，会回落到本机
+    // `agent login` 缓存的凭据，因此不强制要求填写 apiKey。
+    return id === "ollama" || id === "cursor-agent";
   }
 
   static isEndpointUsable(
     endpoint: Pick<LLMEndpoint, "apiUrl" | "apiKey" | "model" | "providerType">,
   ): boolean {
+    const providerType = safeProviderType(endpoint.providerType);
+    // Cursor Agent 的 apiUrl 字段语义是"agent 可执行文件路径"，留空时由
+    // provider 自动探测，因此不要求一定填写。
+    const apiUrlRequired = providerType !== "cursor-agent";
+    if (apiUrlRequired && endpoint.apiUrl.trim().length === 0) return false;
     return (
-      endpoint.apiUrl.trim().length > 0 &&
       endpoint.model.trim().length > 0 &&
       (endpoint.apiKey.trim().length > 0 ||
-        this.providerAllowsEmptyApiKey(endpoint.providerType))
+        this.providerAllowsEmptyApiKey(providerType))
     );
   }
 
@@ -398,9 +414,13 @@ export class LLMEndpointManager {
   static validateEndpoint(endpoint: LLMEndpoint): string[] {
     const missing: string[] = [];
     if (!endpoint.name.trim()) missing.push("name");
-    if (!endpoint.apiUrl.trim()) missing.push("apiUrl");
+    // Cursor Agent 的 apiUrl 留空时由 provider 自动探测可执行文件，不算缺失。
+    const providerType = safeProviderType(endpoint.providerType);
+    if (providerType !== "cursor-agent" && !endpoint.apiUrl.trim()) {
+      missing.push("apiUrl");
+    }
     if (
-      !this.providerAllowsEmptyApiKey(endpoint.providerType) &&
+      !this.providerAllowsEmptyApiKey(providerType) &&
       !endpoint.apiKey.trim()
     ) {
       missing.push("apiKey");
@@ -482,6 +502,8 @@ export class LLMEndpointManager {
       openrouter: "openRouterApiUrl",
       volcanoark: "volcanoArkApiUrl",
       ollama: "ollamaApiUrl",
+      // 对 cursor-agent，apiUrl 字段语义是 "agent 可执行文件路径"。
+      "cursor-agent": "cursorAgentBinaryPath",
     };
     return String(getPref(keyByProvider[providerType] as any) || "").trim();
   }
@@ -497,6 +519,7 @@ export class LLMEndpointManager {
       openrouter: "openRouterApiKey",
       volcanoark: "volcanoArkApiKey",
       ollama: "ollamaApiKey",
+      "cursor-agent": "cursorAgentApiKey",
     };
     const value = String(getPref(keyByProvider[providerType] as any) || "");
     if (providerType === "openai-compat" && !value.trim()) {
@@ -514,6 +537,7 @@ export class LLMEndpointManager {
       openrouter: "openRouterModel",
       volcanoark: "volcanoArkModel",
       ollama: "ollamaModel",
+      "cursor-agent": "cursorAgentModel",
     };
     const value = String(getPref(keyByProvider[providerType] as any) || "");
     if (providerType === "openai-compat" && !value.trim()) {

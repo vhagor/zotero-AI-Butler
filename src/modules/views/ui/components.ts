@@ -42,9 +42,9 @@ export function createStyledButton(
 
   // 尺寸映射
   const sizeMap = {
-    small: { padding: "8px 16px", fontSize: "12px" },
-    medium: { padding: "10px 20px", fontSize: "14px" },
-    large: { padding: "15px", fontSize: "14px" },
+    small: { padding: "6px 12px", fontSize: "12px" },
+    medium: { padding: "8px 16px", fontSize: "13px" },
+    large: { padding: "11px 16px", fontSize: "14px" },
   };
   const sizeStyle = sizeMap[size];
   const maxFontSize = parseInt(sizeStyle.fontSize, 10) || 14;
@@ -53,8 +53,8 @@ export function createStyledButton(
   // 初始样式
   const baseStyle = {
     padding: sizeStyle.padding,
-    border: `2px solid ${color}`,
-    borderRadius: "6px",
+    border: `1px solid ${color}`,
+    borderRadius: "10px",
     fontSize: sizeStyle.fontSize,
     fontWeight: "600",
     cursor: "pointer",
@@ -64,19 +64,22 @@ export function createStyledButton(
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    gap: "10px",
+    gap: "8px",
     whiteSpace: "nowrap",
     overflow: "hidden",
     textOverflow: "ellipsis",
-    lineHeight: "1.1",
+    lineHeight: "1.2",
     minWidth: "0",
+    minHeight: size === "small" ? "28px" : "34px",
+    boxSizing: "border-box",
   };
 
   // 设置初始状态 - 白色背景，文字显示颜色
   Object.assign(button.style, {
     ...baseStyle,
-    backgroundColor: "#ffffff",
+    backgroundColor: "var(--ai-surface)",
     color: color,
+    boxShadow: "0 1px 2px rgba(15, 23, 42, 0.05)",
   });
 
   // 支持 HTML（如 emoji + 文本）
@@ -121,13 +124,12 @@ export function createStyledButton(
     }
   }
 
-  // 悬停效果：背景变色，文字变白
+  // 悬停效果：轻量填充和抬升，减少强烈反差
   button.addEventListener("mouseenter", () => {
-    button.style.backgroundColor = color;
-    // 使用 important 避免被宿主样式覆盖导致文字不可见
-    button.style.setProperty("color", "#000000", "important");
+    button.style.backgroundColor = `${color}18`;
+    button.style.setProperty("color", color, "important");
     button.style.transform = "translateY(-1px)";
-    button.style.boxShadow = `0 2px 8px ${color}40`;
+    button.style.boxShadow = `0 6px 16px ${color}22`;
   });
 
   button.addEventListener("mouseleave", () => {
@@ -141,10 +143,10 @@ export function createStyledButton(
       // 使用默认值
     }
 
-    button.style.backgroundColor = isDark ? "#2b2b2b" : "#ffffff";
+    button.style.backgroundColor = isDark ? "#1e1e1e" : "var(--ai-surface)";
     button.style.setProperty("color", color, "important");
     button.style.transform = "translateY(0)";
-    button.style.boxShadow = "none";
+    button.style.boxShadow = "0 1px 2px rgba(15, 23, 42, 0.05)";
   });
 
   // 点击效果

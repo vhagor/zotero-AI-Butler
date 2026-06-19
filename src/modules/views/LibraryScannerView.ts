@@ -4,11 +4,11 @@
  * ================================================================
  *
  * 本模块提供一个嵌入式视图,用于扫描整个 Zotero 库,
- * 显示所有未分析的文献,并允许用户通过树形结构选择要分析的条目
+ * 显示所有可处理的文献,并允许用户通过树形结构选择要分析/重新分析的条目
  *
  * 主要职责:
  * 1. 扫描所有收藏夹和条目
- * 2. 检测哪些条目缺少 AI 笔记
+ * 2. 标记哪些条目已有 AI 笔记
  * 3. 以树形结构展示扫描结果(支持多级目录)
  * 4. 提供父子联动的复选框选择逻辑
  * 5. 将用户选择的条目批量加入队列
@@ -47,7 +47,9 @@ interface TreeNode {
  */
 export class LibraryScannerView extends BaseView {
   private treeRoot: TreeNode[] = [];
-  private totalUnprocessed: number = 0;
+  private totalScannable: number = 0;
+  private totalWithAINote: number = 0;
+  private itemIdsWithAINote: Set<number> = new Set();
   private selectedCount: number = 0;
   private treeContainer: HTMLElement | null = null;
   private selectedCountElement: HTMLElement | null = null;
@@ -182,7 +184,7 @@ export class LibraryScannerView extends BaseView {
     }) as HTMLButtonElement;
 
     confirmButton.addEventListener("click", () => {
-      this.handleConfirm();
+      void this.handleConfirm();
     });
 
     buttonContainer.appendChild(cancelButton);
@@ -209,13 +211,13 @@ export class LibraryScannerView extends BaseView {
 
     try {
       const startedAt = Date.now();
-      this.log(`[LibraryScanner] 开始扫描未分析文献 scanId=${scanId}`);
+      this.log(`[LibraryScanner] 开始扫描所有文献 scanId=${scanId}`);
 
       await this.scanLibrary(scanId);
       if (!this.isCurrentScan(scanId)) return;
 
       this.log(
-        `[LibraryScanner] 扫描完成 scanId=${scanId}, unprocessed=${this.totalUnprocessed}, elapsedMs=${Date.now() - startedAt}`,
+        `[LibraryScanner] 扫描完成 scanId=${scanId}, total=${this.totalScannable}, withAINote=${this.totalWithAINote}, elapsedMs=${Date.now() - startedAt}`,
       );
       this.updateUI();
     } catch (error) {
@@ -230,7 +232,9 @@ export class LibraryScannerView extends BaseView {
    */
   private async scanLibrary(scanId: number): Promise<void> {
     this.treeRoot = [];
-    this.totalUnprocessed = 0;
+    this.totalScannable = 0;
+    this.totalWithAINote = 0;
+    this.itemIdsWithAINote.clear();
 
     // 获取所有库
     const libraries = Zotero.Libraries.getAll().filter(
@@ -267,19 +271,19 @@ export class LibraryScannerView extends BaseView {
           `[LibraryScanner] 扫描库: id=${libraryID}, name="${libraryLabel}", collections=${collections.length}, topLevelItemIDs=${itemIDs.length}`,
         );
 
-        const unprocessedItems = await this.collectUnprocessedItems(
+        const scannableItems = await this.collectScannableItems(
           itemIDs,
           libraryLabel,
           scanId,
         );
         if (!this.isCurrentScan(scanId)) return;
 
-        this.totalUnprocessed += unprocessedItems.size;
+        this.totalScannable += scannableItems.size;
 
         for (const collection of collections) {
           // 只处理顶层收藏夹
           if (!collection.parentID) {
-            const node = this.buildCollectionNode(collection, unprocessedItems);
+            const node = this.buildCollectionNode(collection, scannableItems);
             if (node) {
               node.parentNode = libraryNode;
               libraryNode.children.push(node);
@@ -288,7 +292,7 @@ export class LibraryScannerView extends BaseView {
         }
 
         // 扫描库中未归类的条目
-        const unfiledItems = this.getUnfiledItems(unprocessedItems);
+        const unfiledItems = this.getUnfiledItems(scannableItems);
         if (unfiledItems.length > 0) {
           const unfiledNode: TreeNode = {
             id: `unfiled-${libraryID}`,
@@ -318,7 +322,7 @@ export class LibraryScannerView extends BaseView {
         }
 
         this.log(
-          `[LibraryScanner] 库扫描完成: id=${libraryID}, unprocessed=${unprocessedItems.size}, unfiled=${unfiledItems.length}, elapsedMs=${Date.now() - libraryStartedAt}`,
+          `[LibraryScanner] 库扫描完成: id=${libraryID}, scannable=${scannableItems.size}, unfiled=${unfiledItems.length}, elapsedMs=${Date.now() - libraryStartedAt}`,
         );
       } catch (error) {
         this.log(
@@ -334,7 +338,7 @@ export class LibraryScannerView extends BaseView {
    */
   private buildCollectionNode(
     collection: Zotero.Collection,
-    unprocessedItems: Map<number, Zotero.Item>,
+    scannableItems: Map<number, Zotero.Item>,
     visitedCollections: Set<number> = new Set(),
   ): TreeNode | null {
     if (visitedCollections.has(collection.id)) {
@@ -360,7 +364,7 @@ export class LibraryScannerView extends BaseView {
     for (const child of childCollections) {
       const childNode = this.buildCollectionNode(
         child,
-        unprocessedItems,
+        scannableItems,
         visitedCollections,
       );
       if (childNode) {
@@ -372,17 +376,17 @@ export class LibraryScannerView extends BaseView {
     // 处理收藏夹中的条目
     const itemIDs = this.getCollectionChildItemIDs(collection);
     for (const itemID of itemIDs) {
-      const unprocessedItem = unprocessedItems.get(itemID);
-      if (!unprocessedItem) continue;
+      const scannableItem = scannableItems.get(itemID);
+      if (!scannableItem) continue;
 
-      const itemNode = this.buildItemNode(unprocessedItem);
+      const itemNode = this.buildItemNode(scannableItem);
       if (itemNode) {
         itemNode.parentNode = node;
         node.children.push(itemNode);
       }
     }
 
-    // 如果这个收藏夹没有未处理的子项,返回 null
+    // 如果这个收藏夹没有可处理的子项,返回 null
     if (node.children.length === 0) {
       return null;
     }
@@ -402,7 +406,9 @@ export class LibraryScannerView extends BaseView {
     return {
       id: `item-${item.id}`,
       type: "item",
-      name: this.getItemTitle(item),
+      name: this.itemIdsWithAINote.has(item.id)
+        ? `${this.getItemTitle(item)}（已分析，可重新生成）`
+        : this.getItemTitle(item),
       item,
       children: [],
       checked: false,
@@ -414,10 +420,10 @@ export class LibraryScannerView extends BaseView {
    * 获取未归类的条目
    */
   private getUnfiledItems(
-    unprocessedItems: Map<number, Zotero.Item>,
+    scannableItems: Map<number, Zotero.Item>,
   ): Zotero.Item[] {
     const items: Zotero.Item[] = [];
-    for (const item of unprocessedItems.values()) {
+    for (const item of scannableItems.values()) {
       try {
         const collectionIDs: number[] = (item as any).getCollections?.() || [];
         if (collectionIDs.length === 0) {
@@ -460,7 +466,7 @@ export class LibraryScannerView extends BaseView {
     }
   }
 
-  private async collectUnprocessedItems(
+  private async collectScannableItems(
     itemIDs: number[],
     libraryLabel: string,
     scanId: number,
@@ -487,16 +493,16 @@ export class LibraryScannerView extends BaseView {
         continue;
       }
 
-      const hasNote = await this.hasExistingAINote(item);
-      if (hasNote) {
+      if (await this.hasExistingAINote(item)) {
         withAINoteCount++;
-      } else {
-        result.set(itemID, item);
+        this.totalWithAINote++;
+        this.itemIdsWithAINote.add(itemID);
       }
+      result.set(itemID, item);
     }
 
     this.log(
-      `[LibraryScanner] 条目检查完成: library="${libraryLabel}", checked=${checkedCount}, skipped=${skippedCount}, withAINote=${withAINoteCount}, withoutAINote=${result.size}`,
+      `[LibraryScanner] 条目检查完成: library="${libraryLabel}", checked=${checkedCount}, skipped=${skippedCount}, withAINote=${withAINoteCount}, scannable=${result.size}`,
     );
     return result;
   }
@@ -695,7 +701,9 @@ export class LibraryScannerView extends BaseView {
 
   private prepareScanUI(): void {
     this.treeRoot = [];
-    this.totalUnprocessed = 0;
+    this.totalScannable = 0;
+    this.totalWithAINote = 0;
+    this.itemIdsWithAINote.clear();
     this.selectedCount = 0;
     this.setInfo("正在扫描 Zotero 库...");
     if (this.treeContainer) {
@@ -942,17 +950,21 @@ export class LibraryScannerView extends BaseView {
     // 更新头部信息
     const infoElement = this.container?.querySelector("#scanner-info");
     if (infoElement) {
-      if (this.totalUnprocessed === 0) {
-        infoElement.innerHTML = "🎉 所有文献都已分析完成!";
+      if (this.totalScannable === 0) {
+        infoElement.innerHTML = "未发现可处理的论文";
       } else {
-        infoElement.innerHTML = `发现 <strong>${this.totalUnprocessed}</strong> 篇文献未进行 AI 分析`;
+        const newCount = Math.max(
+          0,
+          this.totalScannable - this.totalWithAINote,
+        );
+        infoElement.innerHTML = `发现 <strong>${this.totalScannable}</strong> 篇可处理论文（已分析 ${this.totalWithAINote} 篇，未分析 ${newCount} 篇）`;
       }
     }
 
     // 更新树形结构
     if (this.treeContainer) {
       this.treeContainer.innerHTML = "";
-      if (this.totalUnprocessed === 0) {
+      if (this.totalScannable === 0) {
         const emptyMessage = this.createElement("div", {
           styles: {
             textAlign: "center",
@@ -960,7 +972,7 @@ export class LibraryScannerView extends BaseView {
             color: "#999",
             fontSize: "16px",
           },
-          innerHTML: "🎉<br><br>所有文献都已分析完成!",
+          innerHTML: "📭<br><br>未发现可处理的论文",
         });
         this.treeContainer.appendChild(emptyMessage);
       } else {
@@ -1027,7 +1039,7 @@ export class LibraryScannerView extends BaseView {
         fontWeight: "600",
         color: "#fff",
       },
-      innerHTML: `📚 全选/全不选 (共 ${this.totalUnprocessed} 篇未分析)`,
+      innerHTML: `📚 全选/全不选 (共 ${this.totalScannable} 篇论文)`,
     });
 
     content.appendChild(checkbox);
@@ -1500,7 +1512,7 @@ export class LibraryScannerView extends BaseView {
   /**
    * 处理确认操作
    */
-  private handleConfirm(): void {
+  private async handleConfirm(): Promise<void> {
     const selectedItems = this.collectSelectedItems(this.treeRoot);
 
     if (selectedItems.length === 0) {
@@ -1510,9 +1522,12 @@ export class LibraryScannerView extends BaseView {
       return;
     }
 
-    // 批量添加到队列
+    // 批量添加到队列。来自“扫描所有论文”的入口应允许重新生成已有 AI 笔记，
+    // 因此显式传 forceOverwrite，避免被 noteStrategy=skip 拦住。
     for (const item of selectedItems) {
-      this.taskQueueManager.addTask(item, false);
+      await this.taskQueueManager.addTask(item, false, {
+        forceOverwrite: true,
+      });
     }
 
     new ztoolkit.ProgressWindow("AI 管家")

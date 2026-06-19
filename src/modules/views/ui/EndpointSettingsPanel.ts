@@ -83,6 +83,24 @@ function endpointSupportsReasoningEffort(endpoint: LLMEndpoint): boolean {
   );
 }
 
+function isCursorAgentEndpoint(endpoint: LLMEndpoint): boolean {
+  return endpoint.providerType === "cursor-agent";
+}
+
+function cursorAgentRunModeOptions(): Array<{ value: string; label: string }> {
+  return [
+    {
+      value: "ask",
+      label: "Ask（推荐）：只读 Q&A，不调用任何工具，最安全",
+    },
+    {
+      value: "agent",
+      label: "Agent：开启写入 / 终端 / 文件读取工具（自动确认）",
+    },
+    { value: "plan", label: "Plan：只读规划模式" },
+  ];
+}
+
 export class EndpointSettingsPanel {
   private root: HTMLElement;
   private endpoints: LLMEndpoint[];
@@ -707,19 +725,25 @@ export class EndpointSettingsPanel {
     if (endpointSupportsReasoningEffort(endpoint)) {
       details.appendChild(this.renderReasoningEffortField(endpoint));
     }
+    if (isCursorAgentEndpoint(endpoint)) {
+      details.appendChild(this.renderCursorAgentExtrasField(endpoint));
+    }
     details.appendChild(this.renderConnectionTest(endpoint));
     return details;
   }
 
   private renderApiUrlField(endpoint: LLMEndpoint): HTMLElement {
     const document = doc();
+    const isCursorAgent = isCursorAgentEndpoint(endpoint);
     const group = document.createElement("div");
     Object.assign(group.style, {
       marginBottom: "24px",
     });
 
     const label = document.createElement("label");
-    label.textContent = "API 地址 *";
+    label.textContent = isCursorAgent
+      ? "cursor-agent 可执行文件路径"
+      : "API 地址 *";
     Object.assign(label.style, {
       display: "block",
       marginBottom: "8px",
@@ -729,18 +753,60 @@ export class EndpointSettingsPanel {
     });
     group.appendChild(label);
 
+    const inputRow = document.createElement("div");
+    Object.assign(inputRow.style, {
+      display: "flex",
+      alignItems: "stretch",
+      gap: "8px",
+      width: "100%",
+    });
+
     const apiUrlInput = createInput(
       `endpoint-${endpoint.id}-url`,
       "text",
       endpoint.apiUrl,
-      LLMEndpointManager.providerDefaults(endpoint.providerType).apiUrl,
+      isCursorAgent
+        ? "留空自动探测；或填写绝对路径，如 /home/you/.local/bin/agent"
+        : LLMEndpointManager.providerDefaults(endpoint.providerType).apiUrl,
     );
+    Object.assign(apiUrlInput.style, {
+      flex: "1 1 auto",
+      minWidth: "0",
+    });
     apiUrlInput.addEventListener("input", () => {
       endpoint.apiUrl = apiUrlInput.value;
       this.updateEndpointPreview(endpoint);
       this.persist();
     });
-    group.appendChild(apiUrlInput);
+    inputRow.appendChild(apiUrlInput);
+
+    if (isCursorAgent) {
+      const detectButton = createStyledButton("自动探测", "#667eea", "small");
+      detectButton.title =
+        "扫描 ~/.local/bin/agent、/usr/local/bin/agent 等候选路径并填入";
+      detectButton.addEventListener("click", () => {
+        const detected = this.detectCursorAgentBinary();
+        if (detected) {
+          apiUrlInput.value = detected;
+          endpoint.apiUrl = detected;
+          this.updateEndpointPreview(endpoint);
+          this.persist();
+          new ztoolkit.ProgressWindow("Cursor Agent", { closeTime: 2000 })
+            .createLine({ text: `已找到：${detected}`, type: "success" })
+            .show();
+        } else {
+          new ztoolkit.ProgressWindow("Cursor Agent", { closeTime: 4000 })
+            .createLine({
+              text: "未找到 cursor-agent 可执行文件，请先安装：curl https://cursor.com/install -fsS | bash",
+              type: "fail",
+            })
+            .show();
+        }
+      });
+      inputRow.appendChild(detectButton);
+    }
+
+    group.appendChild(inputRow);
 
     const description = document.createElement("div");
     Object.assign(description.style, {
@@ -754,7 +820,7 @@ export class EndpointSettingsPanel {
     });
 
     const required = document.createElement("span");
-    required.textContent = "【必填】";
+    required.textContent = isCursorAgent ? "【可选】" : "【必填】";
     Object.assign(required.style, {
       flex: "0 0 auto",
     });
@@ -777,11 +843,90 @@ export class EndpointSettingsPanel {
     return group;
   }
 
+  /**
+   * 尝试在常见路径里探测本地 cursor-agent 可执行文件。
+   * 与 CursorAgentProvider.resolveAgentBinary 用同一组候选，但仅在文件存在时返回。
+   */
+  private detectCursorAgentBinary(): string | null {
+    try {
+      const Cc = (globalThis as any).Components?.classes;
+      const Ci = (globalThis as any).Components?.interfaces;
+      const envSvc = Cc?.["@mozilla.org/process/environment;1"]?.getService?.(
+        Ci?.nsIEnvironment,
+      );
+      const getEnv = (k: string) => (envSvc?.exists?.(k) ? envSvc.get(k) : "");
+      const userProfile = getEnv("USERPROFILE");
+      // HOME 在 Windows 上常为空，让 USERPROFILE 兜底，避免拼出 "/.local/..." 这种空展开
+      const home = getEnv("HOME") || userProfile;
+      const localAppData = getEnv("LOCALAPPDATA");
+      const appData = getEnv("APPDATA");
+      const programFiles = getEnv("ProgramFiles");
+      // 多信号判 Windows：Zotero.isWin / Services.appinfo.OS / Zotero.platform / navigator
+      let isWin = false;
+      const Z = Zotero as any;
+      if (Z?.isWin === true) isWin = true;
+      else if (Z?.isMac === true || Z?.isLinux === true) isWin = false;
+      else {
+        try {
+          const os = (globalThis as any).Services?.appinfo?.OS;
+          if (os === "WINNT") isWin = true;
+        } catch {
+          /* ignore */
+        }
+        if (!isWin) {
+          const platform = String(
+            Z?.platform ||
+              (typeof navigator !== "undefined" ? navigator.platform : ""),
+          );
+          if (/win/i.test(platform)) isWin = true;
+        }
+      }
+      const candidates = isWin
+        ? [
+            // cursor 官方 win 安装脚本实际位置（launcher 是 .cmd / .ps1）
+            `${localAppData}\\cursor-agent\\agent.cmd`,
+            `${localAppData}\\cursor-agent\\cursor-agent.cmd`,
+            `${localAppData}\\cursor-agent\\agent.ps1`,
+            `${localAppData}\\cursor-agent\\cursor-agent.ps1`,
+            // Cursor IDE 内嵌 CLI 的可能位置
+            `${localAppData}\\Programs\\cursor\\agent.exe`,
+            `${localAppData}\\Programs\\cursor\\resources\\app\\bin\\agent.exe`,
+            `${localAppData}\\Programs\\cursor-cli\\agent.exe`,
+            `${appData}\\Cursor\\agent.exe`,
+            `${programFiles}\\Cursor\\agent.exe`,
+            `${home}\\.local\\bin\\agent.exe`,
+          ]
+        : [
+            `${home}/.local/bin/agent`,
+            "/usr/local/bin/agent",
+            "/opt/homebrew/bin/agent",
+            "/usr/bin/agent",
+          ];
+      const IOUtils = (globalThis as any).IOUtils;
+      for (const path of candidates) {
+        if (!path) continue;
+        // 跳过含未解析变量 / 空段的非法路径，例如 LOCALAPPDATA 缺失时拼出的 "\Programs\cursor\agent.exe"
+        if (path.includes("undefined")) continue;
+        if (isWin && /^\\Programs|^\\Cursor/.test(path)) continue;
+        if (!isWin && path.startsWith("/.")) continue;
+        try {
+          if (IOUtils?.existsSync?.(path)) return path;
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+
   private renderApiKeyField(endpoint: LLMEndpoint): HTMLElement {
     const document = doc();
     const allowsEmptyKey = LLMEndpointManager.providerAllowsEmptyApiKey(
       endpoint.providerType,
     );
+    const isCursorAgent = isCursorAgentEndpoint(endpoint);
     const wrapper = document.createElement("div");
     Object.assign(wrapper.style, {
       display: "flex",
@@ -790,11 +935,16 @@ export class EndpointSettingsPanel {
       width: "100%",
     });
 
+    const placeholder = isCursorAgent
+      ? "可留空（使用 `agent login` 已缓存的凭据）"
+      : allowsEmptyKey
+        ? "可留空"
+        : "sk-...";
     const apiKeyInput = createInput(
       `endpoint-${endpoint.id}-key`,
       "password",
       endpoint.apiKey,
-      allowsEmptyKey ? "可留空" : "sk-...",
+      placeholder,
     );
     Object.assign(apiKeyInput.style, {
       flex: "1 1 auto",
@@ -831,14 +981,20 @@ export class EndpointSettingsPanel {
 
     wrapper.appendChild(apiKeyInput);
     wrapper.appendChild(toggleButton);
+    let helpText: string;
+    if (isCursorAgent) {
+      helpText =
+        "CURSOR_API_KEY。留空时插件不注入该环境变量，cursor-agent 会使用本机 `agent login` 已缓存的凭据。";
+    } else if (allowsEmptyKey) {
+      helpText =
+        "本地服务通常无需 API 密钥；如服务设置了鉴权，可填写 Bearer token。";
+    } else {
+      helpText = "【必填】该供应商的单个 API 密钥，将安全存储在本地。";
+    }
     return createFormGroup(
       allowsEmptyKey ? "API 密钥" : "API 密钥 *",
       wrapper,
-      fieldDescription(
-        allowsEmptyKey
-          ? "Ollama 本地服务通常无需 API 密钥；如服务设置了鉴权，可填写 Bearer token。"
-          : "【必填】该供应商的单个 API 密钥，将安全存储在本地。",
-      ),
+      fieldDescription(helpText),
     );
   }
 
@@ -1008,6 +1164,111 @@ export class EndpointSettingsPanel {
     );
 
     return createFormGroup("思维链长度", select);
+  }
+
+  /**
+   * Cursor Agent 专属配置：运行模式 / 工作目录 / 附加参数。
+   * 这些设置目前是 *全局* 的（覆盖所有 cursor-agent endpoint），因为 LLMService
+   * 从 prefs 而不是 endpoint 对象读取它们。多 endpoint 用户若要差异化配置，
+   * 可在 MVP 之后扩展 endpoint.vendorOptions。
+   */
+  private renderCursorAgentExtrasField(_endpoint: LLMEndpoint): HTMLElement {
+    const document = doc();
+    const container = document.createElement("div");
+    Object.assign(container.style, {
+      display: "flex",
+      flexDirection: "column",
+      gap: "16px",
+      padding: "12px 14px",
+      border: "1px dashed var(--ai-border)",
+      borderRadius: "6px",
+      background: "var(--ai-surface-2)",
+      marginBottom: "20px",
+    });
+
+    const heading = document.createElement("div");
+    heading.textContent = "⚙ Cursor Agent CLI 参数（全局生效）";
+    Object.assign(heading.style, {
+      fontSize: "13px",
+      fontWeight: "600",
+      color: "var(--ai-text)",
+    });
+    container.appendChild(heading);
+
+    container.appendChild(
+      smallMuted(
+        "下列三项作用于所有 cursor-agent endpoint。如需为不同模型设置不同模式，请在 MVP 之后等待 per-endpoint 配置上线。",
+      ),
+    );
+
+    // ============ 运行模式 ============
+    const currentMode = (getPref("cursorAgentMode" as any) as string) || "ask";
+    const modeSelect = createSelect(
+      "cursorAgentMode-select",
+      cursorAgentRunModeOptions(),
+      currentMode,
+      (newValue) => {
+        const normalized = ["ask", "agent", "plan"].includes(newValue)
+          ? newValue
+          : "ask";
+        setPref("cursorAgentMode" as any, normalized);
+      },
+    );
+    container.appendChild(
+      createFormGroup(
+        "运行模式",
+        modeSelect,
+        fieldDescription(
+          "推荐使用 Ask：只读 Q&A，不允许调用任何工具，最安全；只有想让模型主动读取本地文件时才切到 Agent。",
+        ),
+      ),
+    );
+
+    // ============ 工作目录 ============
+    const currentWorkspace =
+      (getPref("cursorAgentWorkspace" as any) as string) || "";
+    const workspaceInput = createInput(
+      "cursorAgentWorkspace-input",
+      "text",
+      currentWorkspace,
+      "留空使用临时目录",
+    );
+    workspaceInput.addEventListener("input", () => {
+      setPref("cursorAgentWorkspace" as any, workspaceInput.value || "");
+    });
+    container.appendChild(
+      createFormGroup(
+        "工作目录",
+        workspaceInput,
+        fieldDescription(
+          "传给 cursor-agent 的 --workspace。Ask 模式下基本无影响；Agent 模式建议指定一个空目录避免误触发文件读取。",
+        ),
+      ),
+    );
+
+    // ============ 附加参数 ============
+    const currentExtra =
+      (getPref("cursorAgentExtraArgs" as any) as string) || "";
+    const extraInput = createInput(
+      "cursorAgentExtraArgs-input",
+      "text",
+      currentExtra,
+      '例如：--header "X-My: foo" --plugin-dir /path/to/plugin',
+    );
+    extraInput.addEventListener("input", () => {
+      setPref("cursorAgentExtraArgs" as any, extraInput.value || "");
+    });
+    container.appendChild(
+      createFormGroup(
+        "附加 CLI 参数",
+        extraInput,
+        fieldDescription(
+          "用空格分隔，支持双引号包裹带空格的值。仅供高级用户。",
+        ),
+      ),
+    );
+
+    return container;
   }
 
   private renderConnectionTest(endpoint: LLMEndpoint): HTMLElement {
@@ -1202,8 +1463,10 @@ export class EndpointSettingsPanel {
       Object.assign(providerDropdown.style, {
         top: "calc(100% - 1px)",
         marginTop: "0",
-        maxHeight: "none",
-        overflowY: "visible",
+        maxHeight: "220px",
+        overflowY: "auto",
+        overscrollBehavior: "contain",
+        scrollbarWidth: "thin",
         borderRadius: "0 0 6px 6px",
         boxShadow: "0 14px 28px rgba(0,0,0,0.2)",
         zIndex: "10000",
@@ -1363,6 +1626,11 @@ export class EndpointSettingsPanel {
       .trim()
       .replace(/^models\//, "");
 
+    if (endpoint.providerType === "cursor-agent") {
+      // Cursor Agent 没有 HTTP 端点；这里把"apiUrl"展示为本地可执行文件路径，
+      // 方便用户确认配置无误。
+      return rawUrl || "(自动探测本地 cursor-agent 可执行文件)";
+    }
     if (endpoint.providerType === "openai") {
       return this.toResponsesEndpoint(rawUrl, "/v1");
     }

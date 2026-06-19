@@ -793,9 +793,13 @@ export class NoteGenerator {
     // 添加标题头部和内容包装
     const noteHtml = `<h2>${heading}</h2>
 <div>${htmlContent}</div>`;
+    const noteHtmlWithRawMarkdown = LLMNoteMetadataService.attachRawMarkdown(
+      noteHtml,
+      summary,
+    );
     return metadata
-      ? LLMNoteMetadataService.wrapHtml(noteHtml, metadata)
-      : noteHtml;
+      ? LLMNoteMetadataService.wrapHtml(noteHtmlWithRawMarkdown, metadata)
+      : noteHtmlWithRawMarkdown;
   }
 
   /**

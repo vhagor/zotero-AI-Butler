@@ -36,6 +36,12 @@ const prefKeys = [
   "ollamaApiUrl",
   "ollamaApiKey",
   "ollamaModel",
+  "cursorAgentBinaryPath",
+  "cursorAgentApiKey",
+  "cursorAgentModel",
+  "cursorAgentMode",
+  "cursorAgentWorkspace",
+  "cursorAgentExtraArgs",
 ];
 
 function prefName(key: string): string {
@@ -273,6 +279,49 @@ describe("LLMEndpointManager", function () {
       apiKey: "",
       model: "llama3.2",
     });
+  });
+
+  it("allows cursor-agent endpoints without API URL or API key", function () {
+    const endpoint: LLMEndpoint = {
+      ...makeEndpoint("cursor-1"),
+      providerType: "cursor-agent",
+      // 留空 apiUrl → 由 provider 自动探测；留空 apiKey → 复用 agent login 凭据
+      apiUrl: "",
+      apiKey: "",
+      model: "composer-2.5",
+    };
+
+    expect(LLMEndpointManager.validateEndpoint(endpoint)).to.deep.equal([]);
+    LLMEndpointManager.saveEndpoints([endpoint]);
+
+    const route = LLMEndpointManager.prepareRoute();
+    expect(route.endpoints[0]).to.include({
+      providerType: "cursor-agent",
+      apiUrl: "",
+      apiKey: "",
+      model: "composer-2.5",
+    });
+  });
+
+  it("still requires a model for cursor-agent endpoints", function () {
+    const endpoint: LLMEndpoint = {
+      ...makeEndpoint("cursor-2"),
+      providerType: "cursor-agent",
+      apiUrl: "",
+      apiKey: "",
+      model: "",
+    };
+    const errors = LLMEndpointManager.validateEndpoint(endpoint);
+    // 至少应该报模型缺失
+    expect(errors.join(" ")).to.match(/model|模型/i);
+  });
+
+  it("exposes cursor-agent in providerTypes() and providerLabel()", function () {
+    expect(LLMEndpointManager.providerTypes()).to.include("cursor-agent");
+    expect(LLMEndpointManager.providerLabel("cursor-agent")).to.be.a("string");
+    const defaults = LLMEndpointManager.providerDefaults("cursor-agent");
+    expect(defaults).to.have.property("model");
+    expect(defaults.model).to.be.a("string");
   });
 
   it("returns selected enabled endpoints for multi-model summaries", function () {

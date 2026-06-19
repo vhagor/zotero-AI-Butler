@@ -9,8 +9,13 @@ import {
   createNotice,
   createCard,
 } from "../ui/components";
-import { isRegularSummaryNote } from "../../aiNoteClassifier";
+import {
+  classifyAiButlerNote,
+  isRegularSummaryNote,
+} from "../../aiNoteClassifier";
 import { TaskQueueManager } from "../../taskQueue";
+import { LLMNoteMetadataService } from "../../llmNoteMetadata";
+import { parseFollowUpChatPairsFromNoteHtml } from "../../noteMarkdown";
 import { getDefaultSummaryPrompt } from "../../../utils/prompts";
 
 export class DataSettingsPage {
@@ -115,8 +120,16 @@ export class DataSettingsPage {
     btnExport.addEventListener("click", () => this.exportSettings());
     const btnImport = createStyledButton("📥 导入设置(JSON)", "#673ab7");
     btnImport.addEventListener("click", () => this.importSettings());
+    const btnExportMarkdown = createStyledButton(
+      "📝 批量导出 AI 笔记(Markdown)",
+      "#59c0bc",
+    );
+    btnExportMarkdown.addEventListener("click", () => {
+      void this.exportAllAiNotesMarkdown();
+    });
     row2.appendChild(btnExport);
     row2.appendChild(btnImport);
+    row2.appendChild(btnExportMarkdown);
     section.appendChild(row2);
 
     // 一键重置
@@ -264,6 +277,201 @@ export class DataSettingsPage {
         .createLine({ text: `❌ 解析失败: ${e.message}`, type: "fail" })
         .show();
     }
+  }
+
+  private async exportAllAiNotesMarkdown(): Promise<void> {
+    try {
+      const markdown = await this.collectAllAiNotesMarkdown();
+      if (!markdown.trim()) {
+        new ztoolkit.ProgressWindow("数据管理", { closeTime: 2200 })
+          .createLine({ text: "未找到可导出的 AI 笔记", type: "fail" })
+          .show();
+        return;
+      }
+
+      const path = await this.pickMarkdownExportPath();
+      if (!path) return;
+
+      const IOUtils = (globalThis as any).IOUtils;
+      if (!IOUtils?.write) {
+        throw new Error("当前 Zotero 环境缺少 IOUtils.write，无法写入文件");
+      }
+
+      await IOUtils.write(path, new TextEncoder().encode(markdown));
+      new ztoolkit.ProgressWindow("数据管理", { closeTime: 2600 })
+        .createLine({ text: `已导出 AI 笔记: ${path}`, type: "success" })
+        .show();
+    } catch (error: any) {
+      ztoolkit.log("[AI Butler] 批量导出 AI 笔记失败:", error);
+      new ztoolkit.ProgressWindow("数据管理", { closeTime: 3200 })
+        .createLine({
+          text: `导出失败: ${error?.message || String(error)}`,
+          type: "fail",
+        })
+        .show();
+    }
+  }
+
+  private async pickMarkdownExportPath(): Promise<string> {
+    const fp = this.createFilePicker("导出 AI 笔记 Markdown", "save");
+    fp.defaultString = `ai-butler-notes-${new Date()
+      .toISOString()
+      .slice(0, 10)}.md`;
+    fp.defaultExtension = "md";
+    fp.appendFilter("Markdown", "*.md");
+    fp.appendFilters(fp.filterAll);
+
+    const result = await new Promise<number>((resolve) => {
+      fp.open((res: number) => resolve(res));
+    });
+
+    if (result !== fp.returnOK && result !== fp.returnReplace) return "";
+    return fp.file?.path || "";
+  }
+
+  private createFilePicker(title: string, mode: "save" | "folder"): any {
+    const win = Zotero.getMainWindow() as any;
+    const browsingContext = win?.browsingContext;
+    if (!browsingContext) {
+      throw new Error(
+        "当前 Zotero 窗口缺少 browsingContext，无法打开文件选择器",
+      );
+    }
+
+    try {
+      const ChromeUtils = (globalThis as any).ChromeUtils;
+      const { FilePicker } = ChromeUtils.importESModule(
+        "chrome://zotero/content/modules/filePicker.mjs",
+      );
+      const fp = new FilePicker();
+      fp.init(
+        browsingContext,
+        title,
+        mode === "save" ? fp.modeSave : fp.modeGetFolder,
+      );
+      return fp;
+    } catch (error) {
+      ztoolkit.log(
+        "[AI Butler] Zotero FilePicker 不可用，回退到 nsIFilePicker:",
+        error,
+      );
+    }
+
+    const fp = (Components.classes as any)[
+      "@mozilla.org/filepicker;1"
+    ].createInstance(Components.interfaces.nsIFilePicker);
+    fp.init(
+      browsingContext,
+      title,
+      mode === "save" ? fp.modeSave : fp.modeGetFolder,
+    );
+    return fp;
+  }
+
+  private async collectAllAiNotesMarkdown(): Promise<string> {
+    const allItems = await Zotero.Items.getAll(Zotero.Libraries.userLibraryID);
+    const sections: string[] = [
+      "# AI Butler 笔记导出",
+      "",
+      `导出时间: ${new Date().toLocaleString()}`,
+    ];
+    let exportedCount = 0;
+
+    for (const item of allItems) {
+      if (!item.isRegularItem()) continue;
+      const noteIDs = (item as any).getNotes?.() || [];
+      if (noteIDs.length === 0) continue;
+
+      const itemTitle =
+        ((item as any).getField?.("title") as string) || "未命名文献";
+      const noteSections: string[] = [];
+
+      for (const noteID of noteIDs) {
+        const note = await Zotero.Items.getAsync(noteID);
+        if (!note) continue;
+        const tags: Array<{ tag: string }> = (note as any).getTags?.() || [];
+        const noteHtml: string = (note as any).getNote?.() || "";
+        const noteType = classifyAiButlerNote(tags, noteHtml);
+        if (!noteType) continue;
+
+        const markdown = this.noteHtmlToExportMarkdown(noteHtml, noteType);
+        if (!markdown.trim()) continue;
+
+        noteSections.push(
+          [`### ${this.noteTypeLabel(noteType)}`, "", markdown.trim()].join(
+            "\n",
+          ),
+        );
+      }
+
+      if (noteSections.length > 0) {
+        exportedCount += noteSections.length;
+        sections.push("", "---", "", `## ${itemTitle}`, "", ...noteSections);
+      }
+    }
+
+    if (exportedCount === 0) return "";
+    sections.splice(3, 0, `导出笔记数: ${exportedCount}`, "");
+    return `${sections.join("\n")}\n`;
+  }
+
+  private noteHtmlToExportMarkdown(noteHtml: string, noteType: string): string {
+    if (noteType === "chat") {
+      const pairs = parseFollowUpChatPairsFromNoteHtml(noteHtml);
+      if (pairs.length > 0) {
+        return pairs
+          .map((pair, index) =>
+            [
+              `#### 追问 ${index + 1}`,
+              "",
+              "**用户:**",
+              "",
+              pair.user,
+              "",
+              "**AI:**",
+              "",
+              pair.assistant,
+            ].join("\n"),
+          )
+          .join("\n\n");
+      }
+    }
+
+    const rawMarkdown = LLMNoteMetadataService.extractRawMarkdown(noteHtml);
+    return rawMarkdown || this.htmlToPlainText(noteHtml);
+  }
+
+  private noteTypeLabel(noteType: string): string {
+    const labels: Record<string, string> = {
+      summary: "论文总结",
+      chat: "后续追问",
+      imageSummary: "一图总结",
+      mindmap: "思维导图",
+      tableFill: "表格归纳",
+      review: "文献综述",
+    };
+    return labels[noteType] || "AI 笔记";
+  }
+
+  private htmlToPlainText(html: string): string {
+    return html
+      .replace(/<style[^>]*>.*?<\/style>/gis, "")
+      .replace(/<script[^>]*>.*?<\/script>/gis, "")
+      .replace(/<!--[\s\S]*?-->/g, "")
+      .replace(/<h[1-6][^>]*>/gi, "\n# ")
+      .replace(/<\/h[1-6]>/gi, "\n\n")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/p>/gi, "\n\n")
+      .replace(/<\/div>/gi, "\n")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&amp;/g, "&")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
   }
 
   private resetAll(): void {

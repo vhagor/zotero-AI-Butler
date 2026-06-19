@@ -515,7 +515,7 @@ export class SummaryView extends BaseView {
     this.chatSendButton.disabled = false;
     this.chatSendButton.innerHTML = "⏹ 终止";
     this.chatSendButton.style.backgroundColor = "#f44336";
-    this.chatSendButton.style.color = "#ffffff";
+    this.chatSendButton.style.setProperty("color", "#ffffff", "important");
     this.chatInput.disabled = true;
 
     const requestConversation = [
@@ -540,6 +540,7 @@ export class SummaryView extends BaseView {
 
     // 创建助手消息容器
     const assistantMessageContainer = this.appendChatMessage("assistant", "");
+    let fullResponse = "";
 
     // 将“用户+助手”两条消息包装为一张卡片，便于整体删除与管理
     let pairContainer: HTMLElement | null = null;
@@ -554,7 +555,7 @@ export class SummaryView extends BaseView {
         styles: {
           position: "relative",
           marginBottom: "18px",
-          padding: "4px 8px 8px 8px",
+          padding: "34px 8px 8px 8px",
           border: "1px solid var(--ai-border)",
           borderRadius: "10px",
           backgroundColor: "var(--ai-surface-2)",
@@ -564,12 +565,42 @@ export class SummaryView extends BaseView {
       });
       (pairContainer as any).setAttribute("data-pair-id", pairId);
 
-      // 删除按钮
-      const deleteBtn = this.createElement("button", {
+      const actionBar = this.createElement("div", {
         styles: {
           position: "absolute",
           top: "6px",
           right: "8px",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          flexWrap: "wrap",
+          gap: "8px",
+          zIndex: "1",
+          maxWidth: "calc(100% - 16px)",
+        },
+      });
+
+      const copyAssistantBtn = this.createElement("button", {
+        styles: {
+          border: "1px solid var(--ai-border)",
+          borderRadius: "999px",
+          background: "var(--ai-surface)",
+          color: "var(--ai-text-muted)",
+          cursor: "pointer",
+          fontSize: "12px",
+          padding: "2px 8px",
+        },
+        textContent: "复制 AI Markdown",
+      }) as HTMLButtonElement;
+      copyAssistantBtn.title = "复制本轮 AI 回复的 Markdown 原文";
+      copyAssistantBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        void this.copyMarkdownToClipboard(fullResponse);
+      });
+
+      // 删除按钮
+      const deleteBtn = this.createElement("button", {
+        styles: {
           border: "none",
           background: "transparent",
           color: "#d32f2f",
@@ -597,9 +628,6 @@ export class SummaryView extends BaseView {
         // 折叠按钮
         const collapseBtn = this.createElement("button", {
           styles: {
-            position: "absolute",
-            top: "6px",
-            right: "36px",
             border: "none",
             background: "transparent",
             color: "var(--ai-text-muted)",
@@ -619,16 +647,16 @@ export class SummaryView extends BaseView {
           }
         });
 
-        pairContainer.appendChild(collapseBtn);
-        pairContainer.appendChild(deleteBtn);
+        actionBar.appendChild(copyAssistantBtn);
+        actionBar.appendChild(collapseBtn);
+        actionBar.appendChild(deleteBtn);
+        pairContainer.appendChild(actionBar);
         pairContainer.appendChild(asstBody);
         this.outputContainer.appendChild(pairContainer);
       } catch (e) {
         ztoolkit.log("[AI-Butler] 包装聊天卡片失败:", e);
       }
     }
-
-    let fullResponse = "";
 
     try {
       const { default: LLMService } = await import("../llmService");
@@ -732,8 +760,9 @@ export class SummaryView extends BaseView {
       if (this.chatSendButton) {
         this.chatSendButton.disabled = false;
         this.chatSendButton.innerHTML = "📤 发送";
-        this.chatSendButton.style.backgroundColor = "var(--ai-accent)";
-        this.chatSendButton.style.color = "#ffffff";
+        this.chatSendButton.style.backgroundColor = "var(--ai-surface)";
+        this.chatSendButton.style.setProperty("color", "#4caf50", "important");
+        this.chatSendButton.style.borderColor = "#4caf50";
       }
       if (this.chatInput) {
         this.chatInput.disabled = false;
@@ -748,6 +777,7 @@ export class SummaryView extends BaseView {
       this.chatSendButton.disabled = true;
       this.chatSendButton.innerHTML = "⏳ 终止中...";
       this.chatSendButton.style.backgroundColor = "#9e9e9e";
+      this.chatSendButton.style.setProperty("color", "#ffffff", "important");
     }
     this.chatAbortController.abort("用户已终止追问");
   }
@@ -967,6 +997,7 @@ export class SummaryView extends BaseView {
       styles: {
         display: "flex",
         alignItems: "center",
+        flexWrap: "wrap",
         gap: "8px",
         padding: "6px 2px 4px 2px",
         minWidth: "0",
@@ -998,6 +1029,35 @@ export class SummaryView extends BaseView {
     }) as HTMLElement;
     header.appendChild(titleEl);
     header.appendChild(previewEl);
+
+    const actionBar = this.createElement("div", {
+      styles: {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        flexWrap: "wrap",
+        gap: "8px",
+        flexShrink: "0",
+        marginLeft: "8px",
+      },
+    });
+    const copyButton = this.createElement("button", {
+      styles: {
+        border: "1px solid var(--ai-border)",
+        borderRadius: "999px",
+        background: "var(--ai-surface)",
+        color: "var(--ai-text-muted)",
+        cursor: "pointer",
+        fontSize: "12px",
+        padding: "2px 8px",
+      },
+      textContent: "复制 Markdown",
+    }) as HTMLButtonElement;
+    copyButton.title = "复制 AI 回答的 Markdown 原文";
+    copyButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      void this.copyMarkdownToClipboard(aiSummary);
+    });
 
     // 内容主体（仅助手）。默认折叠，展开时再渲染完整 Markdown/公式。
     const body = this.createElement("div", {
@@ -1046,9 +1106,6 @@ export class SummaryView extends BaseView {
 
     const collapseBtn = this.createElement("button", {
       styles: {
-        position: "absolute",
-        top: "6px",
-        right: "8px",
         border: "none",
         background: "transparent",
         color: "#555",
@@ -1077,11 +1134,14 @@ export class SummaryView extends BaseView {
       }
     });
 
+    actionBar.appendChild(copyButton);
+    actionBar.appendChild(collapseBtn);
+    header.appendChild(actionBar);
+
     // 初始：折叠状态，保留预览，避免打开追问时渲染大笔记造成卡顿。
     if (previewEl) previewEl.style.display = "inline";
 
     card.appendChild(header);
-    card.appendChild(collapseBtn);
     card.appendChild(body);
     this.outputContainer.appendChild(card);
 
@@ -1201,6 +1261,24 @@ export class SummaryView extends BaseView {
     }
   }
 
+  private getMarkdownExportFromNoteHtml(html: string): string {
+    const rawMarkdown = LLMNoteMetadataService.extractRawMarkdown(html);
+    return rawMarkdown || SummaryView.htmlToPlainText(html);
+  }
+
+  private static htmlToPlainText(html: string): string {
+    return html
+      .replace(/<style[^>]*>.*?<\/style>/gis, "")
+      .replace(/<script[^>]*>.*?<\/script>/gis, "")
+      .replace(/<!--[\s\S]*?-->/g, "")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&")
+      .trim();
+  }
+
   /**
    * 从外部加载指定文献的追问界面
    *
@@ -1274,15 +1352,7 @@ export class SummaryView extends BaseView {
       // 提取 AI 总结内容
       if (targetNote) {
         const html = (targetNote as any).getNote?.() || "";
-        aiSummaryText = html
-          .replace(/<style[^>]*>.*?<\/style>/gis, "")
-          .replace(/<script[^>]*>.*?<\/script>/gis, "")
-          .replace(/<[^>]+>/g, "")
-          .replace(/&nbsp;/g, " ")
-          .replace(/&lt;/g, "<")
-          .replace(/&gt;/g, ">")
-          .replace(/&amp;/g, "&")
-          .trim();
+        aiSummaryText = this.getMarkdownExportFromNoteHtml(html);
       }
 
       // 获取 PDF 内容以支持追问
@@ -1476,16 +1546,7 @@ export class SummaryView extends BaseView {
       // 不直接渲染 html 到 item-content，改为在下方追加可折叠的“AI 总结”卡片
       this.finishItem();
 
-      // 提取AI总结的纯文本内容(去除HTML标签)
-      const aiSummaryText = html
-        .replace(/<style[^>]*>.*?<\/style>/gis, "")
-        .replace(/<script[^>]*>.*?<\/script>/gis, "")
-        .replace(/<[^>]+>/g, "")
-        .replace(/&nbsp;/g, " ")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">")
-        .replace(/&amp;/g, "&")
-        .trim();
+      const aiSummaryText = this.getMarkdownExportFromNoteHtml(html);
 
       // 获取PDF内容以支持后续追问
       try {
@@ -1571,7 +1632,7 @@ export class SummaryView extends BaseView {
             styles: {
               position: "relative",
               marginBottom: "18px",
-              padding: "4px 8px 8px 8px",
+              padding: "34px 8px 8px 8px",
               border: "1px solid var(--ai-border)",
               borderRadius: "10px",
               backgroundColor: "var(--ai-surface-2)",
@@ -1579,11 +1640,41 @@ export class SummaryView extends BaseView {
           });
           (pairDiv as any).setAttribute("data-pair-id", p.id);
 
-          const deleteBtn = this.createElement("button", {
+          const actionBar = this.createElement("div", {
             styles: {
               position: "absolute",
               top: "6px",
               right: "8px",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "flex-end",
+              flexWrap: "wrap",
+              gap: "8px",
+              zIndex: "1",
+              maxWidth: "calc(100% - 16px)",
+            },
+          });
+
+          const copyAssistantBtn = this.createElement("button", {
+            styles: {
+              border: "1px solid var(--ai-border)",
+              borderRadius: "999px",
+              background: "var(--ai-surface)",
+              color: "var(--ai-text-muted)",
+              cursor: "pointer",
+              fontSize: "12px",
+              padding: "2px 8px",
+            },
+            textContent: "复制 AI Markdown",
+          }) as HTMLButtonElement;
+          copyAssistantBtn.title = "复制本轮 AI 回复的 Markdown 原文";
+          copyAssistantBtn.addEventListener("click", (event) => {
+            event.stopPropagation();
+            void this.copyMarkdownToClipboard(p.assistant);
+          });
+
+          const deleteBtn = this.createElement("button", {
+            styles: {
               border: "none",
               background: "transparent",
               color: "#d32f2f",
@@ -1605,9 +1696,6 @@ export class SummaryView extends BaseView {
           asstBody.appendChild(asstEl);
           const collapseBtn = this.createElement("button", {
             styles: {
-              position: "absolute",
-              top: "6px",
-              right: "36px",
               border: "none",
               background: "transparent",
               color: "#555",
@@ -1628,8 +1716,10 @@ export class SummaryView extends BaseView {
           });
 
           try {
-            pairDiv.appendChild(collapseBtn);
-            pairDiv.appendChild(deleteBtn);
+            actionBar.appendChild(copyAssistantBtn);
+            actionBar.appendChild(collapseBtn);
+            actionBar.appendChild(deleteBtn);
+            pairDiv.appendChild(actionBar);
             pairDiv.appendChild(asstBody);
             this.outputContainer.appendChild(pairDiv);
           } catch (e) {
@@ -2056,17 +2146,52 @@ export class SummaryView extends BaseView {
       },
     });
 
-    // 添加标题
+    const itemContainer = this.currentItemContainer;
+
+    // 添加标题和 Markdown 导出按钮
+    const header = this.createElement("div", {
+      styles: {
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+        marginBottom: "15px",
+        minWidth: "0",
+      },
+    });
     const titleElement = this.createElement("h3", {
       styles: {
         color: "var(--ai-accent)",
-        marginBottom: "15px",
+        margin: "0",
         fontSize: "16px",
         overflowWrap: "anywhere",
         wordBreak: "break-word",
+        flex: "1",
+        minWidth: "0",
       },
       textContent: itemTitle,
     });
+    const copyButton = this.createElement("button", {
+      styles: {
+        border: "1px solid var(--ai-border)",
+        borderRadius: "999px",
+        background: "var(--ai-surface)",
+        color: "var(--ai-text-muted)",
+        cursor: "pointer",
+        fontSize: "12px",
+        padding: "3px 9px",
+        flexShrink: "0",
+      },
+      textContent: "复制 Markdown",
+    }) as HTMLButtonElement;
+    copyButton.title = "复制当前 AI 回答的 Markdown 原文";
+    copyButton.addEventListener("click", () => {
+      const markdown =
+        ((itemContainer as any)?.__aiButlerMarkdown as string | undefined) ||
+        this.currentItemBuffer;
+      void this.copyMarkdownToClipboard(markdown);
+    });
+    header.appendChild(titleElement);
+    header.appendChild(copyButton);
 
     // 添加内容容器
     const contentElement = this.createElement("div", {
@@ -2083,7 +2208,7 @@ export class SummaryView extends BaseView {
       },
     });
 
-    this.currentItemContainer.appendChild(titleElement);
+    this.currentItemContainer.appendChild(header);
     this.currentItemContainer.appendChild(contentElement);
     this.outputContainer.appendChild(this.currentItemContainer);
 
@@ -2107,6 +2232,8 @@ export class SummaryView extends BaseView {
 
     // 累积内容
     this.currentItemBuffer += chunk;
+    (this.currentItemContainer as any).__aiButlerMarkdown =
+      this.currentItemBuffer;
 
     // 获取内容容器
     const contentElement = this.currentItemContainer.querySelector(
@@ -2233,6 +2360,30 @@ export class SummaryView extends BaseView {
   }
 
   private async copyErrorToClipboard(text: string): Promise<void> {
+    await this.copyTextToClipboard(text, {
+      success: "已复制错误详情",
+      failure: "复制失败，可手动选择错误文本",
+    });
+  }
+
+  private async copyMarkdownToClipboard(text: string): Promise<void> {
+    const markdown = (text || "").trim();
+    if (!markdown) {
+      new ztoolkit.ProgressWindow("AI Butler", { closeTime: 1800 })
+        .createLine({ text: "暂无可复制的 Markdown 原文", type: "fail" })
+        .show();
+      return;
+    }
+    await this.copyTextToClipboard(markdown, {
+      success: "已复制 Markdown 原文",
+      failure: "复制失败，可手动选择笔记内容",
+    });
+  }
+
+  private async copyTextToClipboard(
+    text: string,
+    messages: { success: string; failure: string },
+  ): Promise<void> {
     const win = Zotero.getMainWindow();
     const document = win.document;
     const clipboard = win.navigator?.clipboard;
@@ -2263,7 +2414,7 @@ export class SummaryView extends BaseView {
       } catch {
         new ztoolkit.ProgressWindow("AI Butler", { closeTime: 2200 })
           .createLine({
-            text: "复制失败，可手动选择错误文本",
+            text: messages.failure,
             type: "fail",
           })
           .show();
@@ -2272,7 +2423,7 @@ export class SummaryView extends BaseView {
     }
 
     new ztoolkit.ProgressWindow("AI Butler", { closeTime: 1500 })
-      .createLine({ text: "已复制错误详情", type: "success" })
+      .createLine({ text: messages.success, type: "success" })
       .show();
   }
 

@@ -61,6 +61,27 @@ describe("LLMNoteMetadataService", function () {
     ).to.equal(html);
   });
 
+  it("stores and restores raw Markdown export blocks", function () {
+    const markdown = [
+      "## 一、核心摘要",
+      "",
+      "公式：$E=mc^2$",
+      "",
+      "$$",
+      "a_b = c^2",
+      "$$",
+    ].join("\n");
+    const html = LLMNoteMetadataService.attachRawMarkdown(
+      "<h2>AI 总结</h2><div>Visible content</div>",
+      markdown,
+    );
+
+    expect(html).to.contain('data-ai-butler-raw-markdown-source="v1"');
+    expect(html).to.contain("data-ai-butler-raw-markdown=");
+    expect(html).not.to.contain("AI_BUTLER_RAW_MARKDOWN_B64URL::v1::");
+    expect(LLMNoteMetadataService.extractRawMarkdown(html)).to.equal(markdown);
+  });
+
   it("ignores similar visible text that is not a real metadata block", function () {
     const html = [
       "<p><!-- AI_BUTLER_LLM_BLOCK_BEGIN::v1::fake::nonce --></p>",

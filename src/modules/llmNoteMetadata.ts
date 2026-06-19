@@ -37,6 +37,9 @@ export interface ParsedLLMNoteSummaryBlock {
 const BEGIN_PREFIX = "AI_BUTLER_LLM_BLOCK_BEGIN::v1::";
 const META_PREFIX = "AI_BUTLER_LLM_META_B64URL::v1::";
 const END_PREFIX = "AI_BUTLER_LLM_BLOCK_END::v1::";
+const RAW_MARKDOWN_PREFIX = "AI_BUTLER_RAW_MARKDOWN_B64URL::v1::";
+const RAW_MARKDOWN_ATTR = "data-ai-butler-raw-markdown";
+const RAW_MARKDOWN_SOURCE_ATTR = "data-ai-butler-raw-markdown-source";
 export const LEGACY_SUMMARY_BLOCK_ID = "__ai_butler_legacy_summary__";
 
 function randomToken(): string {
@@ -49,6 +52,10 @@ function makeBlockId(task: string): string {
 
 function htmlComment(value: string): string {
   return `<!-- ${value} -->`;
+}
+
+function rawMarkdownElement(encoded: string): string {
+  return `<span ${RAW_MARKDOWN_SOURCE_ATTR}="v1" ${RAW_MARKDOWN_ATTR}="${escapeHtml(encoded)}"></span>`;
 }
 
 function escapeHtml(value: string): string {
@@ -350,6 +357,51 @@ export class LLMNoteMetadataService {
       visibleHtml,
       htmlComment(`${END_PREFIX}${blockId}::${checksum}`),
     ].join("\n");
+  }
+
+  static attachRawMarkdown(html: string, markdown?: string | null): string {
+    const raw = (markdown || "").trim();
+    if (!raw) return html;
+    return insertVisibleMetadataAfterTitle(
+      html,
+      rawMarkdownElement(utf8ToBase64Url(raw)),
+    );
+  }
+
+  static extractRawMarkdownBlocks(html: string): string[] {
+    const blocks: string[] = [];
+    const legacyCommentRegex = new RegExp(
+      `<!--\\s*${RAW_MARKDOWN_PREFIX}([A-Za-z0-9_-]+)\\s*-->`,
+      "g",
+    );
+    let match: RegExpExecArray | null;
+
+    const attrRegex =
+      /<([a-z][\w:-]*)\b(?=[^>]*\bdata-ai-butler-raw-markdown-source=(["'])v1\2)([^>]*)>/gi;
+    while ((match = attrRegex.exec(html)) !== null) {
+      const encoded = readHtmlAttribute(match[0], RAW_MARKDOWN_ATTR);
+      if (!encoded) continue;
+      try {
+        const decoded = base64UrlToUtf8(encoded).trim();
+        if (decoded) blocks.push(decoded);
+      } catch {
+        // Ignore malformed raw Markdown attributes.
+      }
+    }
+
+    while ((match = legacyCommentRegex.exec(html)) !== null) {
+      try {
+        const decoded = base64UrlToUtf8(match[1]).trim();
+        if (decoded) blocks.push(decoded);
+      } catch {
+        // Ignore malformed raw Markdown comments.
+      }
+    }
+    return blocks;
+  }
+
+  static extractRawMarkdown(html: string): string {
+    return this.extractRawMarkdownBlocks(html).join("\n\n---\n\n");
   }
 
   static parseAll(html: string): ParsedLLMNoteBlock[] {

@@ -40,6 +40,21 @@ pref("__prefsPrefix__.volcanoArkModel", "doubao-seed-1-8-251228");
 pref("__prefsPrefix__.ollamaApiUrl", "http://localhost:11434");
 pref("__prefsPrefix__.ollamaApiKey", "");
 pref("__prefsPrefix__.ollamaModel", "llama3.2");
+// Cursor Agent (本地 CLI 子进程)
+//   cursorAgentBinaryPath: 本地 `agent` 可执行文件路径，留空时自动探测
+//   cursorAgentApiKey:     CURSOR_API_KEY，留空时复用 `agent login` 已有凭据
+//   cursorAgentModel:      模型 ID，例如 composer-2.5 / claude-4.6-sonnet
+//   cursorAgentMode:       运行模式 ask / agent / plan
+//   cursorAgentWorkspace:  Cursor agent --workspace 目录，留空使用临时目录
+//   cursorAgentExtraArgs:  追加到 CLI 末尾的自由参数，空格分隔
+//   cursorAgentResumeEnabled: 多轮对话时复用上一次返回的 session_id (--resume)，仅发送最新一条 user 消息，省 token 也更快；遇到问题可关闭
+pref("__prefsPrefix__.cursorAgentBinaryPath", "");
+pref("__prefsPrefix__.cursorAgentApiKey", "");
+pref("__prefsPrefix__.cursorAgentModel", "composer-2.5");
+pref("__prefsPrefix__.cursorAgentMode", "ask");
+pref("__prefsPrefix__.cursorAgentWorkspace", "");
+pref("__prefsPrefix__.cursorAgentExtraArgs", "");
+pref("__prefsPrefix__.cursorAgentResumeEnabled", true);
 pref("__prefsPrefix__.llmEndpoints", "[]");
 pref("__prefsPrefix__.llmRoutingStrategy", "priority");
 pref("__prefsPrefix__.llmRoundRobinCursor", "");

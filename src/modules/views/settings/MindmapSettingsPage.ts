@@ -232,8 +232,11 @@ export class MindmapSettingsPage {
         const fp = (Components.classes as any)[
           "@mozilla.org/filepicker;1"
         ].createInstance(Components.interfaces.nsIFilePicker);
-        const win = Zotero.getMainWindow();
-        fp.init(win, "选择导出目录", fp.modeGetFolder);
+        fp.init(
+          (Zotero.getMainWindow() as any).browsingContext,
+          "选择导出目录",
+          fp.modeGetFolder,
+        );
 
         const result = await new Promise<number>((resolve) => {
           fp.open((res: number) => resolve(res));

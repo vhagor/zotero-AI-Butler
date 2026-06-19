@@ -189,4 +189,85 @@ describe("TaskQueue artifact-aware requeue", function () {
     expect(failedTask.error).to.equal(undefined);
     expect(failedTask.retryCount).to.equal(0);
   });
+
+  it("marks manually aborted summary tasks as failed immediately", async function () {
+    const manager = createQueueInternals() as any;
+    const task = createTask(TaskStatus.PROCESSING);
+    let aborted = false;
+    const completeEvents: Array<{ taskId: string; success: boolean }> = [];
+    const streamEvents: string[] = [];
+
+    manager.tasks = new Map([[task.id, task]]);
+    manager.processingTasks = new Set([task.id]);
+    manager.taskAbortControllers = new Map([
+      [
+        task.id,
+        {
+          abort: () => {
+            aborted = true;
+          },
+        },
+      ],
+    ]);
+    manager.abortingTasks = new Set();
+    manager.activeTaskRuns = new Map([[task.id, 1]]);
+    manager.progressCallbacks = new Set();
+    manager.completeCallbacks = new Set([
+      (taskId: string, success: boolean) => {
+        completeEvents.push({ taskId, success });
+      },
+    ]);
+    manager.streamCallbacks = new Set([
+      (_taskId: string, event: { type: string }) => {
+        streamEvents.push(event.type);
+      },
+    ]);
+
+    await manager.abortTask(task.id);
+
+    expect(aborted).to.equal(true);
+    expect(task.status).to.equal(TaskStatus.FAILED);
+    expect(task.workflowStage).to.equal("已终止");
+    expect(task.error).to.equal("用户已终止任务");
+    expect(manager.processingTasks.has(task.id)).to.equal(false);
+    expect(manager.activeTaskRuns.has(task.id)).to.equal(false);
+    expect(completeEvents).to.deep.equal([{ taskId: task.id, success: false }]);
+    expect(streamEvents).to.deep.equal(["error"]);
+  });
+
+  it("schedules the next batch immediately when pending tasks remain", async function () {
+    const manager = createQueueInternals() as any;
+    const first = createTask(TaskStatus.PENDING);
+    const second = {
+      ...createTask(TaskStatus.PENDING),
+      id: "task-2",
+      itemId: 2,
+      title: "Paper 2",
+      createdAt: new Date("2026-01-01T00:00:01Z"),
+    };
+    let scheduled = false;
+
+    manager.tasks = new Map([
+      [first.id, first],
+      [second.id, second],
+    ]);
+    manager.batchSize = 1;
+    manager.isBatchRunning = false;
+    manager.isRunning = true;
+    manager.processingTasks = new Set();
+    manager.executeTask = async (taskId: string) => {
+      const task = manager.tasks.get(taskId);
+      task.status = TaskStatus.COMPLETED;
+      return false;
+    };
+    manager.scheduleImmediateBatch = () => {
+      scheduled = true;
+    };
+
+    await manager.executeNextBatch();
+
+    expect(first.status).to.equal(TaskStatus.COMPLETED);
+    expect(second.status).to.equal(TaskStatus.PENDING);
+    expect(scheduled).to.equal(true);
+  });
 });

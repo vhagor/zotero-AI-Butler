@@ -219,6 +219,9 @@ export class LLMService {
     if (id === "openrouter") return "openrouter";
     if (id === "volcanoark") return "volcanoark";
     if (id === "ollama") return "ollama";
+    if (id === "cursor-agent" || id === "cursor" || id === "cursoragent") {
+      return "cursor-agent";
+    }
     return "openai";
   }
 
@@ -382,11 +385,60 @@ export class LLMService {
       ).trim();
       common.apiKey = ApiKeyManager.getCurrentKey(keyManagerId);
       common.model = (getPref("ollamaModel") || "llama3.2").trim();
+    } else if (id === "cursor-agent") {
+      const keyManagerId = this.mapToKeyManagerId(id);
+      // 对 cursor-agent，apiUrl 字段被复用为本地 agent 可执行文件路径。
+      // 空值合法：CursorAgentProvider 会自动探测系统中的安装路径。
+      common.apiUrl = String(getPref("cursorAgentBinaryPath") || "").trim();
+      common.apiKey = ApiKeyManager.getCurrentKey(keyManagerId);
+      common.model = (getPref("cursorAgentModel") || "composer-2.5").trim();
+      // 将 cursor 专属配置（运行模式 / 工作目录 / 附加参数）放进 vendorOptions
+      // 这样上层无需感知 cursor 字段，provider 内部按需消费。
+      const vendor = { ...(common.vendorOptions || {}) } as Record<
+        string,
+        unknown
+      >;
+      const mode = String(getPref("cursorAgentMode") || "ask").trim();
+      if (mode) vendor.cursorAgentMode = mode;
+      const workspace = String(getPref("cursorAgentWorkspace") || "").trim();
+      if (workspace) vendor.cursorAgentWorkspace = workspace;
+      const extraArgs = String(getPref("cursorAgentExtraArgs") || "").trim();
+      if (extraArgs) vendor.cursorAgentExtraArgs = extraArgs;
+      // 续聊开关：默认 true；false 表示禁用 --resume，每次都把完整 conversation 拍扁发送
+      const resumeRaw = getPref("cursorAgentResumeEnabled");
+      vendor.cursorAgentResumeEnabled = resumeRaw === false ? false : true;
+      common.vendorOptions = vendor;
     } else {
       const keyManagerId = this.mapToKeyManagerId(id);
       common.apiUrl = (getPref("openaiApiUrl") || "").trim();
       common.apiKey = ApiKeyManager.getCurrentKey(keyManagerId);
       common.model = (getPref("openaiApiModel") || "gpt-3.5-turbo").trim();
+    }
+
+    // Cursor Agent 专属：把运行模式 / 工作目录 / 附加参数等本地 CLI 配置
+    // 统一注入 vendorOptions。无论走 endpoint 还是 legacy 全局 pref 路径都执行。
+    const effectiveProviderId = (endpoint?.providerType || id).toLowerCase();
+    if (effectiveProviderId === "cursor-agent") {
+      const vendor: Record<string, unknown> = {
+        ...(common.vendorOptions || {}),
+      };
+      if (vendor.cursorAgentMode === undefined) {
+        const mode = String(getPref("cursorAgentMode" as any) || "ask").trim();
+        vendor.cursorAgentMode = mode || "ask";
+      }
+      if (vendor.cursorAgentWorkspace === undefined) {
+        const ws = String(getPref("cursorAgentWorkspace" as any) || "").trim();
+        if (ws) vendor.cursorAgentWorkspace = ws;
+      }
+      if (vendor.cursorAgentExtraArgs === undefined) {
+        const ea = String(getPref("cursorAgentExtraArgs" as any) || "").trim();
+        if (ea) vendor.cursorAgentExtraArgs = ea;
+      }
+      if (vendor.cursorAgentResumeEnabled === undefined) {
+        const r = getPref("cursorAgentResumeEnabled" as any);
+        vendor.cursorAgentResumeEnabled = r === false ? false : true;
+      }
+      common.vendorOptions = vendor;
     }
 
     return { ...common, ...(extra || {}) };
